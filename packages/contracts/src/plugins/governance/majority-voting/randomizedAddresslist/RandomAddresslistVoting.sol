@@ -12,7 +12,7 @@ import {Addresslist} from "../../../utils/Addresslist.sol";
 import {IMajorityVoting} from "../IMajorityVoting.sol";
 import {MajorityVotingBase} from "../MajorityVotingBase.sol";
 
-import {RandomVoterSelection} from "../RandomVoterSelection.sol";
+import {RandomVoterSelection} from "./RandomVoterSelection.sol";
 
 /// @title RandomAddresslistVoting
 /// @author Michael Gallegos - 2023
@@ -23,7 +23,7 @@ contract RandomAddresslistVoting is IMembership, Addresslist, MajorityVotingBase
 
     // TODO - For now, store a local mapping of addresses that will be the whitelisted addresses
     /// @notice The mapping containing the whitelist of the address list, defauls to false
-    mapping(address => boolean) private _whitelistedAddresses;
+    mapping(address => bool) private _whitelistedAddresses;
 
     /// @notice The [ERC-165](https://eips.ethereum.org/EIPS/eip-165) interface ID of the contract.
     bytes4 internal constant ADDRESSLIST_VOTING_INTERFACE_ID =
@@ -50,10 +50,15 @@ contract RandomAddresslistVoting is IMembership, Addresslist, MajorityVotingBase
     }
 
     // Initialize the _whitelistedAddresses mapping to false
-    function initializeWhitelist(address[] members) returns (void) {
+    function initializeWhitelist(address[] memory members) public {
         for (uint i = 0; i < members.length; i++) {
             _whitelistedAddresses[members[i]] = false;
         }
+    }
+
+    // Check if it is in the list of whitelisted voters
+    function isWhitelistedAddress(address _account) public view returns (bool) {
+        return _whitelistedAddresses[_account];
     }
 
     /// @notice Checks if this or the parent contract supports an interface by its ID.
@@ -159,11 +164,6 @@ contract RandomAddresslistVoting is IMembership, Addresslist, MajorityVotingBase
         return isListed(_account);
     }
 
-    // Check if it is in the list of whitelisted voters
-    function isWhitelistedAddress(address _account) external view returns (bool) {
-        return _whitelistedAddresses[_account];
-    }
-
     /// @inheritdoc MajorityVotingBase
     function _vote(
         uint256 _proposalId,
@@ -221,7 +221,7 @@ contract RandomAddresslistVoting is IMembership, Addresslist, MajorityVotingBase
         }
 
         // The voter is not in the list of whitelisted voters for the proposal
-        if (!isWhitelistedVoter(_account)) { // TODO
+        if (!isWhitelistedAddress(_account)) {
             return false;
         }
 
