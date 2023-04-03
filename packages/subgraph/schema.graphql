@@ -65,7 +65,7 @@ interface TokenTransfer {
   from: Bytes!
   to: Bytes!
   type: TransferType!
-  proposal: Proposal
+  proposal: IProposal
   txHash: Bytes!
   createdAt: BigInt!
 }
@@ -77,7 +77,7 @@ type ERC20Transfer implements TokenTransfer @entity(immutable: true) {
   amount: BigInt!
   from: Bytes!
   to: Bytes!
-  proposal: Proposal
+  proposal: IProposal
   type: TransferType!
   txHash: Bytes!
   createdAt: BigInt!
@@ -90,7 +90,7 @@ type ERC721Transfer implements TokenTransfer @entity(immutable: true) {
   tokenId: BigInt!
   from: Bytes!
   to: Bytes!
-  proposal: Proposal
+  proposal: IProposal
   type: TransferType!
   txHash: Bytes!
   createdAt: BigInt!
@@ -103,7 +103,7 @@ type NativeTransfer implements TokenTransfer @entity(immutable: true) {
   from: Bytes!
   to: Bytes!
   reference: String!
-  proposal: Proposal
+  proposal: IProposal
   type: TransferType!
   txHash: Bytes!
   createdAt: BigInt!
@@ -118,7 +118,9 @@ type ContractPermissionId @entity(immutable: true) {
   permissionId: Bytes!
 }
 
-type Permission @entity(immutable: true) {
+# Cannot be immutable because a permission can be revoked and granted in the same TX.
+# This results in an error in the subgraph if the entity is immutable.
+type Permission @entity {
   "no need to store granted as we can delete permission when revoked"
   id: ID! # where + permissionId + who
   dao: Dao!
@@ -137,7 +139,7 @@ type Action @entity {
   value: BigInt!
   data: Bytes!
   dao: Dao!
-  proposal: Proposal!
+  proposal: IProposal!
   execResult: Bytes
 }
 
@@ -163,12 +165,12 @@ type Dao @entity {
   balances: [TokenBalance!]! @derivedFrom(field: "dao")
   contractPermissionIds: [ContractPermissionId!]! @derivedFrom(field: "dao")
   permissions: [Permission!]! @derivedFrom(field: "dao")
-  pluginInstallations: [PluginInstallation!]! @derivedFrom(field: "dao")
-  plugins: [IPluginInstallation!]! @derivedFrom(field: "dao") # TODO: Delete or refactor after the plugins left the Aragon OSx subgraph
-  proposals: [Proposal!] @derivedFrom(field: "dao")
+  proposals: [IProposal!]! @derivedFrom(field: "dao")
   trustedForwarder: Bytes
   signatureValidator: Bytes
-  standardCallbacks: [StandardCallback!] @derivedFrom(field: "dao")
+  standardCallbacks: [StandardCallback!]! @derivedFrom(field: "dao")
+
+  plugins: [IPlugin!]! @derivedFrom(field: "dao") # TODO: Refactor to `PluginInstallation` after the plugins left the Aragon OSx subgraph
 }
 
 # Plugins
@@ -176,7 +178,7 @@ type Dao @entity {
 type PluginRepo @entity(immutable: true) {
   id: ID! # address
   subdomain: String!
-  versions: [PluginVersion!]! @derivedFrom(field: "pluginRepo")
+  releases: [PluginRelease!]! @derivedFrom(field: "pluginRepo")
   # Holds all preparations. Also applied ones.
   preparations: [PluginPreparation!]! @derivedFrom(field: "pluginRepo")
   # Holds all installed and uninstalled installations.
@@ -188,13 +190,23 @@ type PluginSetup @entity(immutable: true) {
   versions: [PluginVersion!]! @derivedFrom(field: "pluginSetup")
 }
 
+type PluginRelease @entity {
+  id: ID! # pluginRepo + release
+  pluginRepo: PluginRepo!
+  release: Int!
+  metadata: String! # release metadata
+  builds: [PluginVersion!]! @derivedFrom(field: "release")
+}
+
 type PluginVersion @entity(immutable: true) {
   id: ID! # pluginRepo + release + build
   pluginRepo: PluginRepo!
   pluginSetup: PluginSetup
-  release: Int!
+
+  release: PluginRelease!
   build: Int!
-  metadata: Bytes!
+
+  metadata: String! # build metadata
   # Holds all preparations. Also applied ones.
   preparations: [PluginPreparation!]! @derivedFrom(field: "pluginVersion")
   # Holds all installed and uninstalled installations.
@@ -232,11 +244,11 @@ type PluginPreparation @entity(immutable: true) {
   type: PluginPreparationType!
 }
 
-# Don't implement IPluginInstallation. Otherwise it would show up under plugins in the DAO entity
+# Don't implement IPlugin. Otherwise it would show up under plugins in the DAO entity
 type PluginInstallation @entity {
   id: ID! # psp installationId
   dao: Dao!
-  pluginAddress: Bytes # The plugin address provided by the applied preparation
+  plugin: IPlugin # The plugin address as id provided by the applied preparation
   appliedPreparation: PluginPreparation
   appliedSetupId: Bytes # The setupId of the application see PSP documentation for more info
   appliedVersion: PluginVersion # Stored to track installations in the different plugin versions
@@ -258,10 +270,12 @@ enum PluginPreparationState {
   Uninstalled
 }
 
-interface IPluginInstallation {
-  id: ID! # psp installationId
+interface IPlugin {
+  id: ID! # plugin address
   dao: Dao!
   pluginAddress: Bytes!
+
+  installations: [PluginInstallation!]! @derivedFrom(field: "plugin")
 
   # TODO: Uncomment as soon as the plugins have their own subgraph
   # appliedPreparation: PluginPreparation
@@ -273,13 +287,29 @@ interface IPluginInstallation {
 ### Entities below should move to there respective subgraph once plugin is seperated from the Aragon OSx
 # Proposal
 
-interface Proposal {
+interface IProposal {
   id: ID! # package + proposalId
   dao: Dao!
   creator: Bytes!
   metadata: String
   actions: [Action!]! @derivedFrom(field: "proposal")
   allowFailureMap: BigInt!
+  failureMap: BigInt
+  executed: Boolean!
+  createdAt: BigInt!
+  startDate: BigInt!
+  endDate: BigInt!
+  executionTxHash: Bytes
+}
+
+type TransactionActionsProposal implements IProposal @entity {
+  id: ID!
+  dao: Dao!
+  creator: Bytes!
+  metadata: String
+  actions: [Action!]! @derivedFrom(field: "proposal")
+  allowFailureMap: BigInt!
+  failureMap: BigInt
   executed: Boolean!
   createdAt: BigInt!
   startDate: BigInt!
@@ -304,11 +334,13 @@ enum VotingMode {
 
 # TokenVoting
 
-type TokenVotingPlugin implements IPluginInstallation @entity {
+type TokenVotingPlugin implements IPlugin @entity {
   "TODO: attributes should be appended to Plugins once plugin is separated from Aragon OSx"
   id: ID!
   dao: Dao!
   pluginAddress: Bytes!
+
+  installations: [PluginInstallation!]! @derivedFrom(field: "plugin")
 
   proposals: [TokenVotingProposal!]! @derivedFrom(field: "plugin")
   votingMode: VotingMode
@@ -348,11 +380,12 @@ type TokenVotingVote @entity {
   updatedAt: BigInt!
 }
 
-type TokenVotingProposal implements Proposal @entity {
+type TokenVotingProposal implements IProposal @entity {
   id: ID! # package + proposalId
   dao: Dao!
   actions: [Action!]! @derivedFrom(field: "proposal")
   allowFailureMap: BigInt!
+  failureMap: BigInt
   plugin: TokenVotingPlugin!
   proposalId: BigInt!
   creator: Bytes!
@@ -377,6 +410,7 @@ type TokenVotingProposal implements Proposal @entity {
   endDate: BigInt!
   creationBlockNumber: BigInt!
   executable: Boolean
+  earlyExecutable: Boolean
   executionDate: BigInt
   executionBlockNumber: BigInt
   executionTxHash: Bytes
@@ -384,11 +418,13 @@ type TokenVotingProposal implements Proposal @entity {
 
 # AddresslistVoting
 
-type AddresslistVotingPlugin implements IPluginInstallation @entity {
+type AddresslistVotingPlugin implements IPlugin @entity {
   "TODO: attributes should be appended to Plugin once plugin is seperated from Aragon OSx"
   id: ID!
   dao: Dao!
   pluginAddress: Bytes!
+
+  installations: [PluginInstallation!]! @derivedFrom(field: "plugin")
 
   proposals: [AddresslistVotingProposal!]! @derivedFrom(field: "plugin")
   votingMode: VotingMode
@@ -419,11 +455,12 @@ type AddresslistVotingVote @entity {
   updatedAt: BigInt!
 }
 
-type AddresslistVotingProposal implements Proposal @entity {
+type AddresslistVotingProposal implements IProposal @entity {
   id: ID! # package + proposalId
   dao: Dao!
   actions: [Action!]! @derivedFrom(field: "proposal")
   allowFailureMap: BigInt!
+  failureMap: BigInt
   plugin: AddresslistVotingPlugin!
   proposalId: BigInt!
   creator: Bytes!
@@ -448,6 +485,7 @@ type AddresslistVotingProposal implements Proposal @entity {
   endDate: BigInt!
   creationBlockNumber: BigInt!
   executable: Boolean
+  earlyExecutable: Boolean
   executionDate: BigInt
   executionBlockNumber: BigInt
   executionTxHash: Bytes
@@ -455,11 +493,13 @@ type AddresslistVotingProposal implements Proposal @entity {
 
 # Admin (plugin)
 
-type AdminPlugin implements IPluginInstallation @entity {
+type AdminPlugin implements IPlugin @entity {
   "TODO: attributes should be appended to Plugin once plugin is separated from Aragon OSx"
   id: ID!
   dao: Dao!
   pluginAddress: Bytes!
+
+  installations: [PluginInstallation!]! @derivedFrom(field: "plugin")
 
   proposals: [AdminProposal!]! @derivedFrom(field: "plugin")
   administrators: [AdministratorAdminPlugin!]! @derivedFrom(field: "plugin")
@@ -479,13 +519,14 @@ type AdministratorAdminPlugin @entity {
   plugin: AdminPlugin!
 }
 
-type AdminProposal implements Proposal @entity {
+type AdminProposal implements IProposal @entity {
   id: ID! # plugin + proposalId
   dao: Dao!
   creator: Bytes! # Administrator address
   metadata: String
   actions: [Action!]! @derivedFrom(field: "proposal")
   allowFailureMap: BigInt!
+  failureMap: BigInt
   executed: Boolean!
   createdAt: BigInt!
   startDate: BigInt!
@@ -498,19 +539,21 @@ type AdminProposal implements Proposal @entity {
 
 # Multisig
 
-type MultisigPlugin implements IPluginInstallation @entity {
+type MultisigPlugin implements IPlugin @entity {
   "TODO: attributes should be appended to Plugin once plugin is seperated from Aragon OSx"
   id: ID!
   dao: Dao!
   pluginAddress: Bytes!
+
+  installations: [PluginInstallation!]! @derivedFrom(field: "plugin")
 
   proposalCount: BigInt
   proposals: [MultisigProposal!]! @derivedFrom(field: "plugin")
   members: [MultisigApprover!]! @derivedFrom(field: "plugin")
 
   # multisig settings
-  minApprovals: BigInt
-  onlyListed: Boolean!
+  minApprovals: Int
+  onlyListed: Boolean
 }
 
 type MultisigApprover @entity {
@@ -528,11 +571,12 @@ type MultisigProposalApprover @entity(immutable: true) {
   createdAt: BigInt!
 }
 
-type MultisigProposal implements Proposal @entity {
+type MultisigProposal implements IProposal @entity {
   id: ID! # plugin + proposalId
   dao: Dao!
   actions: [Action!]! @derivedFrom(field: "proposal")
   allowFailureMap: BigInt!
+  failureMap: BigInt
   plugin: MultisigPlugin!
   proposalId: BigInt!
   creator: Bytes!
